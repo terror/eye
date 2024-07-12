@@ -1,19 +1,21 @@
-use clap::Parser;
-use serde::Serialize;
-use std::fs;
-use std::path::{Path, PathBuf};
-use syn::__private::ToTokens;
-use syn::{parse_file, Fields, Item, ItemStruct};
-use tokio::net::TcpListener;
-use walkdir::WalkDir;
-
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-  /// Path to the Rust crate to analyze
-  #[clap(short, long, value_parser)]
-  crate_path: PathBuf,
-}
+use {
+  axum::{extract::State, routing::get, Json, Router},
+  clap::Parser,
+  serde::Serialize,
+  std::{
+    fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process,
+    sync::Arc,
+  },
+  syn::{__private::ToTokens, parse_file, Fields, Item, ItemStruct},
+  tokio::net::TcpListener,
+  tower_http::cors::CorsLayer,
+  tracing::{error, info},
+  tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt},
+  walkdir::WalkDir,
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,7 +79,7 @@ fn analyze(crate_path: &Path) -> Result<Graph> {
       path: crate_path.to_path_buf(),
     },
     children: Vec::new(),
-    documentation: String::new(), // TODO: Generate documentation
+    documentation: String::new(),
   };
 
   graph.nodes.push(root_node);
@@ -92,19 +94,25 @@ fn process_crate(
   crate_path: &Path,
   parent_id: NodeId,
 ) -> Result {
-  for entry in WalkDir::new(crate_path).into_iter().filter_map(Result::ok) {
+  let entries = WalkDir::new(crate_path).into_iter().filter_map(Result::ok);
+
+  for entry in entries {
     if entry.file_type().is_file()
       && entry.path().extension().map_or(false, |ext| ext == "rs")
     {
       let file_path = entry.path();
+
       let file_content = fs::read_to_string(file_path)?;
+
       let syntax = parse_file(&file_content)?;
 
       let module_name = file_path
         .strip_prefix(crate_path)?
         .to_string_lossy()
         .into_owned();
+
       let module_id = graph.nodes.len();
+
       let module_node = Node {
         id: module_id,
         name: module_name,
@@ -112,9 +120,11 @@ fn process_crate(
           path: file_path.to_path_buf(),
         },
         children: Vec::new(),
-        documentation: String::new(), // TODO: Generate documentation
+        documentation: String::new(),
       };
+
       graph.nodes.push(module_node);
+
       graph.nodes[parent_id].children.push(module_id);
 
       process_items(graph, &syntax.items, file_path, module_id)?;
@@ -142,7 +152,7 @@ fn process_items(
               path: file_path.to_path_buf(),
             },
             children: Vec::new(),
-            documentation: String::new(), // TODO: Generate documentation
+            documentation: String::new(),
           };
           graph.nodes.push(module_node);
           graph.nodes[parent_id].children.push(module_id);
@@ -159,7 +169,7 @@ fn process_items(
             fields: process_struct_fields(s),
           },
           children: Vec::new(),
-          documentation: String::new(), // TODO: Generate documentation
+          documentation: String::new(),
         };
         graph.nodes.push(struct_node);
         graph.nodes[parent_id].children.push(struct_id);
@@ -173,7 +183,7 @@ fn process_items(
             variants: e.variants.iter().map(|v| v.ident.to_string()).collect(),
           },
           children: Vec::new(),
-          documentation: String::new(), // TODO: Generate documentation
+          documentation: String::new(),
         };
         graph.nodes.push(enum_node);
         graph.nodes[parent_id].children.push(enum_id);
@@ -207,7 +217,7 @@ fn process_items(
             },
           },
           children: Vec::new(),
-          documentation: String::new(), // TODO: Generate documentation
+          documentation: String::new(),
         };
         graph.nodes.push(fn_node);
         graph.nodes[parent_id].children.push(fn_id);
@@ -273,24 +283,16 @@ struct Server {
   port: u16,
 }
 
-use axum::Router;
-use std::net::SocketAddr;
-use tower_http::cors::CorsLayer;
-
-use axum::{extract::State, routing::get, Json};
-
-use std::sync::Arc;
-
 impl Server {
   async fn run(self, options: Options) -> Result {
     let addr = SocketAddr::from(([0, 0, 0, 0], self.port));
 
-    tracing::info!("Listening on port: {}", addr.port());
+    info!("Listening on port: {}", addr.port());
 
     let state = Arc::new(options);
 
     let router = Router::new()
-      .route("/api/graph", get(get_graph))
+      .route("/api/graph", get(Self::graph))
       .with_state(state)
       .layer(CorsLayer::permissive());
 
@@ -300,24 +302,21 @@ impl Server {
 
     Ok(())
   }
-}
 
-async fn get_graph(State(options): State<Arc<Options>>) -> Json<Graph> {
-  match analyze(&options.crate_path) {
-    Ok(graph) => Json(graph),
-    Err(e) => {
-      tracing::error!("Error analyzing crate: {:?}", e);
-      Json(Graph {
-        root: 0,
-        nodes: vec![],
-      }) // Return an empty graph on error
+  async fn graph(State(options): State<Arc<Options>>) -> Json<Graph> {
+    match analyze(&options.crate_path) {
+      Ok(graph) => Json(graph),
+      Err(e) => {
+        error!("Error analyzing crate: {:?}", e);
+
+        Json(Graph {
+          root: 0,
+          nodes: vec![],
+        })
+      }
     }
   }
 }
-
-use std::process;
-
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 type Result<T = (), E = anyhow::Error> = std::result::Result<T, E>;
 

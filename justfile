@@ -6,7 +6,7 @@ default:
   just --list
 
 fmt:
-  cargo fmt
+  cargo +nightly fmt
   prettier --write .
 
 dev *args:
