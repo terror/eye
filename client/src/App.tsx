@@ -26,6 +26,7 @@ interface RawGraph {
 
 interface CustomNode extends Node {
   title: string;
+  rawData: RawNode;
 }
 
 interface CustomGraphData extends GraphData {
@@ -35,6 +36,7 @@ interface CustomGraphData extends GraphData {
 const Graph: React.FC = () => {
   const [graph, setGraph] = useState<CustomGraphData | null>(null);
   const [selectedNode, setSelectedNode] = useState<CustomNode | null>(null);
+  const [graphHeight, setGraphHeight] = useState<string>('100vh');
 
   useEffect(() => {
     fetch('/api/graph')
@@ -44,14 +46,24 @@ const Graph: React.FC = () => {
         setGraph(graphData);
       })
       .catch((error) => console.error('Error fetching graph data:', error));
+
+    const updateHeight = () => {
+      setGraphHeight(`${window.innerHeight}px`);
+    };
+
+    window.addEventListener('resize', updateHeight);
+    updateHeight();
+
+    return () => window.removeEventListener('resize', updateHeight);
   }, []);
 
   const transformData = (data: RawGraph): CustomGraphData => {
     const nodes: CustomNode[] = data.nodes.map((node) => ({
       id: node.id,
-      label: node.name,
+      label: getNodeLabel(node),
       title: generateNodeTooltip(node),
       color: getNodeColor(node.kind),
+      rawData: node,
     }));
 
     const edges: Edge[] = data.nodes.flatMap((node) =>
@@ -65,6 +77,13 @@ const Graph: React.FC = () => {
     return { nodes, edges };
   };
 
+  const getNodeLabel = (node: RawNode): string => {
+    if (node.kind.module) {
+      return node.name.split('/').pop() || node.name;
+    }
+    return node.name;
+  };
+
   const generateNodeTooltip = (node: RawNode): string => {
     let details = '';
     if (node.kind.struct) {
@@ -76,7 +95,7 @@ const Graph: React.FC = () => {
     } else if (node.kind.module) {
       details = `Module`;
     }
-    return `<strong>${node.name}</strong><br>${details}<br>${node.documentation}`;
+    return `<strong>${node.name}</strong><br>${details}`;
   };
 
   const getNodeColor = (kind: RawNode['kind']): string => {
@@ -90,14 +109,17 @@ const Graph: React.FC = () => {
   const options: Options = {
     layout: {
       hierarchical: {
-        direction: 'UD',
+        direction: 'LR',
         sortMethod: 'directed',
+        levelSeparation: 150,
+        nodeSpacing: 150,
       },
     },
     edges: {
       color: '#000000',
     },
-    height: '500px',
+    height: graphHeight,
+    width: '100%',
     physics: {
       enabled: false,
     },
@@ -116,20 +138,94 @@ const Graph: React.FC = () => {
     },
   };
 
+  const renderNodeDetails = (node: CustomNode) => {
+    const { rawData } = node;
+    return (
+      <div>
+        <h2 className='text-xl font-bold'>{node.label}</h2>
+        <p>
+          <strong>Type:</strong> {Object.keys(rawData.kind)[0]}
+        </p>
+        {rawData.kind.module && (
+          <p>
+            <strong>Path:</strong> {rawData.kind.module.path}
+          </p>
+        )}
+        {rawData.kind.struct && (
+          <div>
+            <p>
+              <strong>Fields:</strong>
+            </p>
+            <ul>
+              {rawData.kind.struct.fields.map((field: any, index: number) => (
+                <li key={index}>
+                  {field.name}: {field.type_name}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {rawData.kind.enum && (
+          <div>
+            <p>
+              <strong>Variants:</strong>
+            </p>
+            <ul>
+              {rawData.kind.enum.variants.map(
+                (variant: string, index: number) => (
+                  <li key={index}>{variant}</li>
+                )
+              )}
+            </ul>
+          </div>
+        )}
+        {rawData.kind.function && (
+          <div>
+            <p>
+              <strong>Arguments:</strong>
+            </p>
+            <ul>
+              {rawData.kind.function.arguments.map(
+                (arg: any, index: number) => (
+                  <li key={index}>
+                    {arg.name}: {arg.type_name}
+                  </li>
+                )
+              )}
+            </ul>
+            <p>
+              <strong>Return Type:</strong>{' '}
+              {rawData.kind.function.return_type || 'None'}
+            </p>
+          </div>
+        )}
+        {rawData.documentation && (
+          <div>
+            <p>
+              <strong>Documentation:</strong>
+            </p>
+            <p>{rawData.documentation}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="relative">
-      {graph && (
-        <VisGraph
-          graph={graph}
-          options={options}
-          events={events}
-          style={{ height: '500px' }}
-        />
-      )}
+    <div className='flex h-screen'>
+      <div className='flex-grow'>
+        {graph && (
+          <VisGraph
+            graph={graph}
+            options={options}
+            events={events}
+            style={{ height: graphHeight, width: '100%' }}
+          />
+        )}
+      </div>
       {selectedNode && (
-        <div className='m-4 rounded p-4'>
-          <h2 className='text-xl font-bold'>{selectedNode.label}</h2>
-          <p dangerouslySetInnerHTML={{ __html: selectedNode.title }}></p>
+        <div className='w-1/4 overflow-auto border-l p-4'>
+          {renderNodeDetails(selectedNode)}
         </div>
       )}
     </div>
