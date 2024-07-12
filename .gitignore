@@ -1,6 +1,23 @@
+!.vscode/extensions.json
+*.local
+*.log
+*.njsproj
+*.ntvs*
+*.sln
+*.suo
+*.sw?
+.DS_Store
+.idea
+.vscode/*
 /.DS_Store
-
-
-# Added by cargo
-
 /target
+/target
+dist
+dist-ssr
+lerna-debug.log*
+logs
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*

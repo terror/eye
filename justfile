@@ -7,3 +7,6 @@ default:
 
 fmt:
   cargo fmt
+
+dev:
+  bun run dev

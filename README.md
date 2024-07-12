@@ -1,6 +1,6 @@
 ## eye
 
-**eye** (👁️) is a local llm-powered rust-crate visualizer. It spawns an
+**eye** (👁️) is a local large language model powered rust-crate visualizer. It spawns an
 infinite canvas like web application you can quickly load up in your browser to
 fully understand a rust crates modules, structs, functions and their intertwined
 relationships.
