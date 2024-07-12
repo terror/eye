@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use syn::__private::ToTokens;
 use syn::{parse_file, Fields, Item, ItemStruct};
+use tokio::net::TcpListener;
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
@@ -59,11 +60,12 @@ struct Field {
   type_name: String,
 }
 
-fn analyze(crate_path: &Path) -> Result<Graph, Box<dyn std::error::Error>> {
+fn analyze(crate_path: &Path) -> Result<Graph> {
   let mut graph = Graph {
     root: 0,
     nodes: Vec::new(),
   };
+
   let root_node = Node {
     id: 0,
     name: crate_path
@@ -77,6 +79,7 @@ fn analyze(crate_path: &Path) -> Result<Graph, Box<dyn std::error::Error>> {
     children: Vec::new(),
     documentation: String::new(), // TODO: Generate documentation
   };
+
   graph.nodes.push(root_node);
 
   process_crate(&mut graph, crate_path, 0)?;
@@ -88,7 +91,7 @@ fn process_crate(
   graph: &mut Graph,
   crate_path: &Path,
   parent_id: NodeId,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result {
   for entry in WalkDir::new(crate_path).into_iter().filter_map(Result::ok) {
     if entry.file_type().is_file()
       && entry.path().extension().map_or(false, |ext| ext == "rs")
@@ -126,7 +129,7 @@ fn process_items(
   items: &[Item],
   file_path: &Path,
   parent_id: NodeId,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result {
   for item in items {
     match item {
       Item::Mod(m) => {
@@ -231,14 +234,105 @@ fn process_struct_fields(item_struct: &ItemStruct) -> Vec<Field> {
   }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let args = Args::parse();
-  let crate_graph = analyze(&args.crate_path)?;
+#[derive(Debug, Parser)]
+struct Options {
+  #[clap(long, short)]
+  crate_path: PathBuf,
+}
 
-  // Serialize to JSON
-  let json = serde_json::to_string_pretty(&crate_graph)?;
-  fs::write("crate_graph.json", json)?;
+#[derive(Debug, Parser)]
+struct Arguments {
+  #[clap(flatten)]
+  options: Options,
+  #[clap(subcommand)]
+  subcommand: Subcommand,
+}
 
-  println!("Crate graph has been written to crate_graph.json");
-  Ok(())
+impl Arguments {
+  async fn run(self) -> Result {
+    self.subcommand.run(self.options).await
+  }
+}
+
+#[derive(Debug, Parser)]
+enum Subcommand {
+  Serve(Server),
+}
+
+impl Subcommand {
+  async fn run(self, options: Options) -> Result {
+    match self {
+      Subcommand::Serve(server) => server.run(options).await,
+    }
+  }
+}
+
+#[derive(Debug, Parser)]
+struct Server {
+  #[clap(short, long, default_value = "8000")]
+  port: u16,
+}
+
+use axum::Router;
+use std::net::SocketAddr;
+use tower_http::cors::CorsLayer;
+
+use axum::{extract::State, routing::get, Json};
+
+use std::sync::Arc;
+
+impl Server {
+  async fn run(self, options: Options) -> Result {
+    let addr = SocketAddr::from(([0, 0, 0, 0], self.port));
+
+    tracing::info!("Listening on port: {}", addr.port());
+
+    let state = Arc::new(options);
+
+    let router = Router::new()
+      .route("/api/graph", get(get_graph))
+      .with_state(state)
+      .layer(CorsLayer::permissive());
+
+    let listener = TcpListener::bind(addr).await?;
+
+    axum::serve(listener, router.into_make_service()).await?;
+
+    Ok(())
+  }
+}
+
+async fn get_graph(State(options): State<Arc<Options>>) -> Json<Graph> {
+  match analyze(&options.crate_path) {
+    Ok(graph) => Json(graph),
+    Err(e) => {
+      tracing::error!("Error analyzing crate: {:?}", e);
+      Json(Graph {
+        root: 0,
+        nodes: vec![],
+      }) // Return an empty graph on error
+    }
+  }
+}
+
+use std::process;
+
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+type Result<T = (), E = anyhow::Error> = std::result::Result<T, E>;
+
+#[tokio::main]
+async fn main() {
+  tracing_subscriber::registry()
+    .with(
+      tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info".into()),
+    )
+    .with(tracing_subscriber::fmt::layer())
+    .init();
+
+  if let Err(error) = Arguments::parse().run().await {
+    eprintln!("{error}");
+    process::exit(1);
+  }
 }
