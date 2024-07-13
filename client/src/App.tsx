@@ -123,10 +123,6 @@ const Graph: React.FC = () => {
     physics: {
       enabled: false,
     },
-    interaction: {
-      navigationButtons: true,
-      keyboard: true,
-    },
   };
 
   const events = {
