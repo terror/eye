@@ -1,6 +1,7 @@
 set dotenv-load
 
 export EDITOR := 'vim'
+export RUST_LOG := 'info'
 
 default:
   just --list
