@@ -202,22 +202,36 @@ const Graph: React.FC = () => {
 
   const options: Options = useMemo(
     () => ({
-      layout: {
-        hierarchical: {
-          direction: 'LR',
-          sortMethod: 'directed',
-          levelSeparation: 150,
-          nodeSpacing: 150,
-        },
-      },
       edges: {
         color: '#000000',
       },
       height: graphHeight,
-      width: '100%',
+      layout: {
+        randomSeed: undefined,
+        improvedLayout: true,
+        clusterThreshold: 150,
+        hierarchical: {
+          enabled: true,
+          levelSeparation: 150,
+          nodeSpacing: 100,
+          treeSpacing: 200,
+          blockShifting: true,
+          edgeMinimization: true,
+          parentCentralization: true,
+          direction: 'LR',
+          sortMethod: 'directed',
+          shakeTowards: 'leaves',
+        },
+      },
+
+      nodes: {
+        shape: 'dot',
+        size: 14,
+      },
       physics: {
         enabled: false,
       },
+      width: '100%',
     }),
     [graphHeight]
   );
